@@ -16,6 +16,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       SPORTSCORE_API_BASE_URL: ${SPORTSCORE_API_BASE_URL:-https://sportscore.com}
+      BSD_API_TOKEN: ${BSD_API_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy
