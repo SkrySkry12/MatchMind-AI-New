@@ -160,7 +160,7 @@ async function bsdJson(path,ttl=TTL.fixtures,forceRefresh=false){
  }catch(error){if(!forceRefresh&&hit){stats.staleFallbacks++;return hit.data;}throw error;}
 }
 async function bsdFixtures(day){
- if(!process.env.BSD_API_TOKEN)return {fixtures:[],notice:null};
+ if(!process.env.BSD_API_TOKEN)return {fixtures:[],notice:'Brak BSD_API_TOKEN — Ekstraklasa może nie być dostępna. Dodaj token BSD w zmiennych środowiskowych aplikacji.'};
  const query=new URLSearchParams({league_id:String(BSD_LEAGUE_ID),date_from:day,date_to:day,limit:'200'});
  try{
   const data=await bsdJson('/api/v2/events/?'+query.toString(),TTL.fixtures);
