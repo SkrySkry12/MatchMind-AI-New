@@ -125,27 +125,32 @@ async function espnFixtures(day){
 
 const BSD='https://sports.bzzoiro.com';
 const BSD_LEAGUE_ID=25;
-function bsdTeam(raw){
+function bsdTeam(raw,fallbackName=null,fallbackId=null){
  const t=raw?.team||raw||{};
- return {id:val(t.id,t.team_id,null),name:str(t.name||t.display_name||t.displayName||t.short_name,'Nieznana drużyna'),logo:str(t.logo||t.logo_url||t.badge),slug:str(t.short_name||t.abbreviation||'')};
+ const name=typeof raw==='string'?raw:val(t.name,t.display_name,t.displayName,t.short_name,fallbackName,'Nieznana drużyna');
+ return {id:val(t.id,t.team_id,fallbackId,null),name:str(name,'Nieznana drużyna'),logo:str(t.logo||t.logo_url||t.badge),slug:str(t.short_name||t.abbreviation||'')};
 }
 function bsdStatus(raw){
  const s=str(raw?.status?.name||raw?.status?.short||raw?.status||raw?.state||'upcoming').toLowerCase();
- if(/live|in.?play/.test(s))return 'LIVE';
- if(/finish|complete|ended/.test(s))return 'FT';
+ if(/live|in.?play|progress|1st_half|2nd_half|half.?time|extratime|penalt/.test(s))return 'LIVE';
+ if(/finish|complete|ended|aet/.test(s))return 'FT';
  if(/postpon/.test(s))return 'POSTPONED';
  if(/cancel|abandon/.test(s))return 'CANCELLED';
  return 'NS';
 }
 function bsdEventToMatch(e){
- const home=bsdTeam(e.home_team||e.home||e.homeTeam||e.teams?.home||e.competitors?.find(x=>x.home_away==='home'||x.homeAway==='home'));
- const away=bsdTeam(e.away_team||e.away||e.awayTeam||e.teams?.away||e.competitors?.find(x=>x.home_away==='away'||x.homeAway==='away'));
- const when=val(e.kickoff_at,e.start_time,e.date,e.match_date,e.datetime,e.utc_date);
- const id=val(e.id,e.event_id);
- if(!id||!when||!home.name||!away.name||Number.isNaN(Date.parse(when)))return null;
+ // BSD v2 returns home_team/away_team as strings, separate *_team_id fields,
+ // home_team_name/away_team_name in brief rows, and event_date for kick-off.
+ const homeRaw=e.home_team||e.home||e.homeTeam||e.teams?.home||e.competitors?.find(x=>x.home_away==='home'||x.homeAway==='home');
+ const awayRaw=e.away_team||e.away||e.awayTeam||e.teams?.away||e.competitors?.find(x=>x.home_away==='away'||x.homeAway==='away');
+ const home=bsdTeam(homeRaw,val(e.home_team_name,e.home_name,e.home?.name,null),val(e.home_team_id,e.home_id,null));
+ const away=bsdTeam(awayRaw,val(e.away_team_name,e.away_name,e.away?.name,null),val(e.away_team_id,e.away_id,null));
+ const when=val(e.kickoff,e.kickoff_at,e.start_time,e.event_date,e.date,e.match_date,e.datetime,e.utc_date);
+ const id=val(e.id,e.event_id,e.fixture_id);
+ if(!id||!when||!home.name||!away.name||home.name==='Nieznana drużyna'||away.name==='Nieznana drużyna'||Number.isNaN(Date.parse(when)))return null;
  const score=e.score||{},hs=val(score.home,e.home_score,e.home_goals),as=val(score.away,e.away_score,e.away_goals);
  const status=bsdStatus(e);
- return {id:'bsd:'+String(id),slug:'bsd:'+String(id),date:new Date(when).toISOString(),league:'Ekstraklasa',leagueId:'pol.1',country:'Polska',round:str(e.round_label||e.round_name||e.round||e.matchday||''),status,statusText:str(e.status_display||e.status?.label||e.status||''),home,away,venue:str(e.venue?.name||e.venue_name||e.stadium||''),elapsed:val(e.current_minute,e.minute,null),score:{home:hs==null?null:Number(hs),away:as==null?null:Number(as)},prediction:null,source:'BSD',providerEventId:String(id)};
+ return {id:'bsd:'+String(id),slug:'bsd:'+String(id),date:new Date(when).toISOString(),league:'Ekstraklasa',leagueId:'pol.1',country:'Polska',round:str(e.round_label||e.round_name||e.round_number||e.round||e.matchday||''),status,statusText:str(e.status_display||e.status?.label||e.status||e.status_name||''),home,away,venue:str(e.venue?.name||e.venue_name||e.stadium||e.venue||''),elapsed:val(e.current_minute,e.minute,null),score:{home:hs==null?null:Number(hs),away:as==null?null:Number(as)},prediction:null,source:'BSD',providerEventId:String(id)};
 }
 async function bsdJson(path,ttl=TTL.fixtures,forceRefresh=false){
  const token=process.env.BSD_API_TOKEN;
