@@ -86,7 +86,6 @@ async function askLocalLLM(compact){
 }
 
 function poissonProbability(lambda,k){let value=Math.exp(-lambda);for(let i=1;i<=k;i++)value*=lambda/i;return value;}
-function poissonProbability(lambda,k){let value=Math.exp(-lambda);for(let i=1;i<=k;i++)value*=lambda/i;return value;}
 function expectedGoalsModel(home,away){
  if(!home||!away||home.matches<3||away.matches<3)return {available:false,reason:'Za mało danych: potrzeba co najmniej 3 meczów każdej drużyny.'};
  const weighted=(s,key)=>{const a=s.last5?.[key],b=s.last10?.[key],base=s[key];return Number.isFinite(a)&&Number.isFinite(b)?a*.65+b*.35:Number.isFinite(base)?base:1.25;};
