@@ -159,14 +159,41 @@ async function bsdJson(path,ttl=TTL.fixtures,forceRefresh=false){
   const data=await response.json();await writeCache(key,data,ttl);return data;
  }catch(error){if(!forceRefresh&&hit){stats.staleFallbacks++;return hit.data;}throw error;}
 }
+function bsdRows(data){
+ if(Array.isArray(data))return data;
+ if(Array.isArray(data?.results))return data.results;
+ if(Array.isArray(data?.events))return data.events;
+ if(Array.isArray(data?.items))return data.items;
+ if(Array.isArray(data?.data))return data.data;
+ if(Array.isArray(data?.data?.results))return data.data.results;
+ if(Array.isArray(data?.data?.events))return data.data.events;
+ return [];
+}
+function bsdLeagueId(event){
+ return val(event?.league?.id,event?.competition?.id,event?.league_id,event?.competition_id,event?.leagueId,event?.tournament?.id,null);
+}
 async function bsdFixtures(day){
  if(!process.env.BSD_API_TOKEN)return {fixtures:[],notice:'Brak BSD_API_TOKEN — Ekstraklasa może nie być dostępna. Dodaj token BSD w zmiennych środowiskowych aplikacji.'};
- const query=new URLSearchParams({league_id:String(BSD_LEAGUE_ID),date_from:day,date_to:day,limit:'200'});
- try{
-  const data=await bsdJson('/api/v2/events/?'+query.toString(),TTL.fixtures);
-  const rows=array(data.results||data.events||data.items||data.data);
-  return {fixtures:rows.map(bsdEventToMatch).filter(Boolean),notice:null};
- }catch(error){return {fixtures:[],notice:'BSD: '+error.message};}
+ const baseParams={date_from:day,date_to:day,limit:'200'};
+ const attempts=[
+  new URLSearchParams({...baseParams,league_id:String(BSD_LEAGUE_ID)}),
+  new URLSearchParams({...baseParams,league_id:String(BSD_LEAGUE_ID),status:'notstarted'}),
+  new URLSearchParams({...baseParams,status:'notstarted'})
+ ];
+ let lastError=null,seenRows=0,parsedRows=0;
+ for(let i=0;i<attempts.length;i++){
+  try{
+   const data=await bsdJson('/api/v2/events/?'+attempts[i].toString(),TTL.fixtures,i>0);
+   const rows=bsdRows(data);seenRows=Math.max(seenRows,rows.length);
+   const candidates=i===2?rows.filter(e=>String(bsdLeagueId(e))===String(BSD_LEAGUE_ID)):rows;
+   const parsed=candidates.map(bsdEventToMatch).filter(Boolean);
+   parsedRows=Math.max(parsedRows,parsed.length);
+   if(parsed.length)return {fixtures:parsed,notice:null};
+  }catch(error){lastError=error;}
+ }
+ if(lastError)return {fixtures:[],notice:'BSD: '+lastError.message};
+ if(seenRows>0&&parsedRows===0)return {fixtures:[],notice:'BSD zwrócił '+seenRows+' rekordów dla '+day+', ale format danych meczu nie został rozpoznany. Potrzebna korekta mapowania pól wydarzenia.'};
+ return {fixtures:[],notice:'BSD nie zwrócił spotkań Ekstraklasy dla '+day+'. Sprawdź zakres dat i ligę 25.'};
 }
 function bsdPlayers(raw){
  const groups=[];
