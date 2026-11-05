@@ -72,7 +72,8 @@ function resultForTeam(event,teamId){
  if(!own||!opp||!completed)return null;
  const gf=scoreNumber(own.score),ga=scoreNumber(opp.score);
  if(gf===null||ga===null)return null;
- return {date:val(comp.date,event.date),opponent:opp.team?.displayName||opp.team?.name||'Rywal',gf,ga,result:gf>ga?'W':gf===ga?'D':'L',venue:own.homeAway==='home'?'dom':own.homeAway==='away'?'wyjazd':'nieznane'};
+ const opponentRecord=val(opp.records?.find(r=>r.type==='total')?.summary,opp.records?.[0]?.summary,opp.record?.summary,opp.record,null);
+ return {date:val(comp.date,event.date),opponent:opp.team?.displayName||opp.team?.name||'Rywal',opponentRecord:opponentRecord==null?null:String(opponentRecord),gf,ga,result:gf>ga?'W':gf===ga?'D':'L',venue:own.homeAway==='home'?'dom':own.homeAway==='away'?'wyjazd':'nieznane'};
 }
 function poisson(lambda,k){let p=Math.exp(-lambda);for(let i=1;i<=k;i++)p*=lambda/i;return p;}
 function estimateProbabilities(h,a){

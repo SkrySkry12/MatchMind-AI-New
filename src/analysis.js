@@ -2,6 +2,9 @@ import {getMatchBundle} from './sports.js';
 import {getManualStats} from './store.js';
 import {readCache,writeCache,saveForecast} from './cache.js';
 const ANALYSIS_CACHE_TTL=20*60;
+const DAY_MS=86400000;
+function daysBetween(a,b){const x=Date.parse(a||''),y=Date.parse(b||'');return Number.isFinite(x)&&Number.isFinite(y)?Math.max(0,Math.floor((y-x)/DAY_MS)):null;}
+function eventCards(events){return (Array.isArray(events)?events:[]).filter(e=>/red.?card|czerw|dismiss|sent.?off/i.test([e.type,e.detail,e.text,e.description].filter(Boolean).join(' '))).map(e=>({team:e.team?.name||e.team||null,player:e.player?.name||e.player||null,time:e.time?.elapsed||e.minute||null,detail:e.detail||e.text||e.description||e.type||'Czerwona kartka'}));}
 const systemPrompt='Jesteś analitykiem piłkarskim MatchMind AI. Analizuj wyłącznie dostarczone fakty. Uwzględniaj ostatnie 5 meczów, gole strzelone i stracone, punkty na mecz, czyste konta, mecze bez gola, BTTS, over 2.5, serię wyników, przewagę własnego boiska, statystyki sezonowe oraz potwierdzone absencje. Nie traktuj samych zwycięstw i porażek jako pełnej analizy. Nie wymyślaj danych ani składów. Oddziel fakty od szacunków, wskaż brakujące dane i czynniki ryzyka. Nie zawyżaj pewności. Pisz po polsku, czytelnie, z krótkimi nagłówkami i maksymalnie 300 słowami.';
 function summarizeWindow(form){
  if(!form.length)return null;
@@ -34,9 +37,11 @@ function compactEvidence(evidence){
  const m=evidence.match,pre=m.match?.preMatch,teams={};
  for(const [side,label] of [['home','Gospodarze'],['away','Goście']]){
   const ctx=pre?.[side]||{},form=Array.isArray(ctx.form)?ctx.form:[],summary=summarizeForm(form);
-  teams[side]={label,team:m.match?.[side]?.name||m.match?.[side]?.name||label,form:form.map(x=>({date:x.date,opponent:x.opponent,result:x.result,goalsFor:x.gf,goalsAgainst:x.ga,venue:x.venue})),summary,injuries:(ctx.injuries||[]).map(x=>({name:x.name,status:x.status})),notice:ctx.notice||null};
+  const kickoff=m.match?.date||m.match?.kickoff||m.match?.startTime;
+  const restDays=form.length?daysBetween(form[0].date,kickoff):null;
+  teams[side]={label,team:m.match?.[side]?.name||label,form:form.map(x=>({date:x.date,opponent:x.opponent,opponentRecord:x.opponentRecord||null,result:x.result,goalsFor:x.gf,goalsAgainst:x.ga,venue:x.venue})),summary,restDays,injuries:(ctx.injuries||[]).map(x=>({name:x.name,status:x.status})),notice:ctx.notice||null};
  }
- return {match:{home:m.match?.home?.name||m.match?.home?.displayName,away:m.match?.away?.name||m.match?.away?.displayName,league:m.match?.league,venue:m.match?.venue,prediction:m.match?.prediction||m.predictions},teams,seasonStats:readableSeasonStats(m.statistics),lineupCount:m.lineups?.length||0,injuryCount:m.injuries?.length||0,notices:pre?.notices||[],manualStatsCount:evidence.manual?.length||0};
+ return {match:{home:m.match?.home?.name||m.match?.home?.displayName,away:m.match?.away?.name||m.match?.away?.displayName,league:m.match?.league,venue:m.match?.venue,kickoff:m.match?.date||m.match?.kickoff||null,prediction:m.match?.prediction||m.predictions},teams,seasonStats:readableSeasonStats(m.statistics),events:m.events||[],redCards:eventCards(m.events),lineups:(m.lineups||[]).map(g=>({team:g.team,kind:g.kind,formation:g.formation||null,players:(g.players||[]).map(p=>({name:p.name,position:p.position||null,starter:p.starter??null}))})),injuries:(m.injuries||[]).map(x=>({name:x.name,team:x.team||null,status:x.status||x.reason||null})),lineupCount:m.lineups?.length||0,injuryCount:m.injuries?.length||0,notices:pre?.notices||[],manualStatsCount:evidence.manual?.length||0};
 }
 function deterministicSummary(evidence){
  const m=evidence.match,compact=compactEvidence(evidence),parts=[];
@@ -52,12 +57,15 @@ function deterministicSummary(evidence){
    parts.push(t.label+' — dodatkowe wskaźniki: czyste konta '+s.cleanSheets+'/'+s.matches+', bez zdobytej bramki '+s.failedToScore+'/'+s.matches+', obie drużyny strzelały '+s.btts+'/'+s.matches+', over 2.5 gola '+s.over25+'/'+s.matches+'. Trend punktowy ostatnich 3 spotkań: '+s.trend+'.');
    if(f.length)parts.push(t.label+' — wyniki chronologicznie od najnowszego: '+f.map(x=>x.result+' '+x.goalsFor+':'+x.goalsAgainst+' vs '+x.opponent+(x.venue?' ('+x.venue+')':'')).join('; ')+'.');
   }else parts.push(t.label+': brak wystarczającej historii wyników.');
+  if(t.restDays!==null)parts.push(t.label+' — odpoczynek od ostatniego meczu: około '+t.restDays+' dni.');
+  const records=f.filter(x=>x.opponentRecord).map(x=>x.opponent+': '+x.opponentRecord);if(records.length)parts.push(t.label+' — dostępne rekordy wcześniejszych rywali (surowe dane dostawcy): '+records.join('; ')+'.');
   if(t.injuries.length)parts.push(t.label+' — zgłoszone absencje: '+t.injuries.map(x=>x.name+' ('+x.status+')').join(', ')+'.');
   else parts.push(t.label+' — brak potwierdzonych danych o absencjach; nie oznacza to pełnego składu.');
  }
  if(compact.seasonStats.length)parts.push('Statystyki sezonowe: '+compact.seasonStats.join(' '));
- if(compact.lineupCount)parts.push('Dostępne wpisy składów: '+compact.lineupCount+'.');
- if(compact.injuryCount)parts.push('Rekordy absencji w szczegółach meczu: '+compact.injuryCount+'.');
+ if(compact.lineupCount)parts.push('Dostępne wpisy składów: '+compact.lineupCount+'. Typ danych: '+compact.lineups.map(x=>x.kind).join(', ')+'. Kadra/roster nie jest traktowana jako potwierdzona jedenastka.');
+ if(compact.injuries.length)parts.push('Absencje z danych szczegółowych: '+compact.injuries.map(x=>x.name+(x.team?' ('+x.team+')':'')+(x.status?' — '+x.status:'')).join('; ')+'.');
+ if(compact.redCards.length)parts.push('Czerwone kartki wykryte w zdarzeniach tego meczu: '+compact.redCards.map(x=>(x.team||'Zespół')+(x.player?' — '+x.player:'')+(x.time?' ('+x.time+')':'')).join('; ')+'. Zdarzenia bieżącego meczu nie potwierdzają kartek w poprzednich spotkaniach.');
  if(compact.notices.length)parts.push('Ograniczenia: '+compact.notices.join(' '));
  if(evidence.manual?.length)parts.push('Dostępne są '+evidence.manual.length+' ręcznie dodane zestawy statystyk, ale ich pola wymagają weryfikacji przed użyciem.');
  if(!parts.length)parts.push('Brak wystarczających danych do rzetelnej analizy.');
@@ -121,7 +129,7 @@ function buildQuickReadout(compact){
 }
 export async function analyzeMatch(matchId,extra={}){
  const model=process.env.OLLAMA_MODEL||'qwen3:0.6b',forceRefresh=extra.forceRefresh===true;
- const cacheKey='analysis:v13:'+String(matchId)+':'+model;
+ const cacheKey='analysis:v14:'+String(matchId)+':'+model;
  const cached=await readCache(cacheKey);
  if(!forceRefresh&&cached&&cached.expires>Date.now())return {...cached.data,cached:true};
  let match,providerNotice=null;
