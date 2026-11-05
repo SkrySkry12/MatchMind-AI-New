@@ -214,24 +214,57 @@ function bsdPlayers(raw){
  }
  return groups;
 }
+async function bsdTeamContext(teamId,forceRefresh=false){
+ if(!teamId)return {form:[],overall:null,formString:'',injuries:[],notice:'BSD nie zwrócił identyfikatora drużyny.'};
+ const [formData,squadData]=await Promise.all([
+  bsdJson('/api/v2/teams/'+encodeURIComponent(teamId)+'/form/?last=10&league_id='+BSD_LEAGUE_ID,TTL.team,forceRefresh).catch(()=>null),
+  bsdJson('/api/v2/teams/'+encodeURIComponent(teamId)+'/squad/',TTL.squad,forceRefresh).catch(()=>null)
+ ]);
+ const formRows=array(formData?.recent_matches||formData?.matches_list||formData?.results);
+ const form=formRows.map(x=>({date:val(x.event_date,x.date),opponent:str(x.opponent||x.opponent_name||x.home_team||x.away_team,''),gf:val(x.goals_for,x.gf,x.team_score),ga:val(x.goals_against,x.ga,x.opponent_score),result:str(x.result||x.outcome,'')})).filter(x=>x.result);
+ const players=array(squadData?.players||squadData?.results||squadData?.squad||squadData?.data);
+ const injuries=players.filter(p=>/injured|doubtful|suspended/i.test(str(p.availability))).map(p=>({name:str(p.name||p.player?.name,'Zawodnik'),status:[p.availability,p.injury_type,p.injury_expected_return?'powrót: '+p.injury_expected_return:null].filter(Boolean).join(' · ')}));
+ return {form,overall:formData?.overall||null,formString:str(formData?.overall?.form||formData?.form,''),injuries,notice:!formData?'BSD nie udostępnił aktualnej formy tej drużyny.':null};
+}
+function bsdStatsGroups(raw,fixture){
+ const stats=raw?.stats||raw?.data?.stats||raw;
+ const labels={ball_possession:'Ball Possession',total_shots:'Total Shots',shots_on_target:'Shots on Goal',corner_kicks:'Corner Kicks',fouls:'Fouls',yellow_cards:'Yellow Cards',red_cards:'Red Cards',offsides:'offsides'};
+ return ['home','away'].map(side=>({team:fixture[side],statistics:Object.entries(stats?.[side]||{}).filter(([key,value])=>labels[key]&&value!==null&&typeof value!=='object').map(([key,value])=>({type:labels[key],value}))})).filter(x=>x.statistics.length);
+}
+function bsdEvents(raw,fixture){
+ const rows=array(raw?.incidents||raw?.events||raw?.data?.incidents||raw?.data?.events);
+ return rows.map(x=>({type:str(x.type||x.incident_type,''),detail:str(x.text||x.description||x.type,''),time:{elapsed:val(x.minute,x.time?.minute,x.elapsed,null)},team:{name:str(x.team?.name||x.team_name||(x.team==='home'?fixture.home.name:x.team==='away'?fixture.away.name:''))},player:{name:str(x.player?.name||x.player_name||'')}}));
+}
 async function bsdBundle(id,forceRefresh=false){
  const match=/^bsd:(\d+)$/.exec(id);
  if(!match)throw new Error('Nieprawidłowy identyfikator meczu BSD.');
  const eventId=match[1];
- const [detail,lineupData]=await Promise.all([
+ const [detail,lineupData,statsData,incidentsData,oddsData,predictionData,h2hData]=await Promise.all([
   bsdJson('/api/v2/events/'+eventId+'/',TTL.details,forceRefresh),
-  bsdJson('/api/v2/events/'+eventId+'/lineups/',TTL.squad,forceRefresh).catch(()=>null)
+  bsdJson('/api/v2/events/'+eventId+'/lineups/',TTL.squad,forceRefresh).catch(()=>null),
+  bsdJson('/api/v2/events/'+eventId+'/stats/',TTL.details,forceRefresh).catch(()=>null),
+  bsdJson('/api/v2/events/'+eventId+'/incidents/',TTL.details,forceRefresh).catch(()=>null),
+  bsdJson('/api/v2/events/'+eventId+'/odds/',TTL.details,forceRefresh).catch(()=>null),
+  bsdJson('/api/v2/events/'+eventId+'/prediction/',TTL.details,forceRefresh).catch(()=>null),
+  bsdJson('/api/v2/events/'+eventId+'/h2h/',TTL.team,forceRefresh).catch(()=>null)
  ]);
  const fixture=bsdEventToMatch({...detail,id:eventId});
  if(!fixture)throw new Error('BSD nie zwrócił danych drużyn lub daty spotkania.');
+ const [homeContext,awayContext]=await Promise.all([bsdTeamContext(fixture.home.id,forceRefresh),bsdTeamContext(fixture.away.id,forceRefresh)]);
  const lineups=bsdPlayers(lineupData||detail.lineups||{});
  const unavailable=detail.unavailable_players||lineupData?.unavailable_players||[];
- const injuries=array(unavailable).flatMap(group=>{
+ const injuries=[...array(unavailable).flatMap(group=>{
   const teamName=str(group.team?.name||group.team_name||group.team||'');
   return array(group.players||group.athletes||group.unavailable_players).map(p=>({name:str(p.name||p.player?.name||p.full_name,'Zawodnik'),team:teamName,status:str(p.status||p.reason||p.type,'Niedostępny')}));
- });
- const status=fixture.status;
- return {source:'BSD',fixture:[{fixture:{status:{short:status,long:fixture.statusText}},goals:fixture.score,teams:{home:fixture.home,away:fixture.away}}],match:fixture,statistics:[],events:[],lineups,squadKind:lineups.some(g=>g.kind==='lineup')?'lineup':lineups.length?'predicted':null,players:[],injuries,predictions:null,live:status==='LIVE',refreshAfterSeconds:status==='LIVE'?30:null,attribution:{label:'BSD · Bzzoiro Sports Data',url:'https://sports.bzzoiro.com/leagues/25/'}};
+ }),...homeContext.injuries.map(x=>({...x,team:fixture.home.name})),...awayContext.injuries.map(x=>({...x,team:fixture.away.name}))];
+ const markets=predictionData?.markets||predictionData?.data?.markets||{};
+ const result=markets.match_result||{};
+ const prediction=result.prob_home!=null?{home:Number(result.prob_home),draw:Number(result.prob_draw),away:Number(result.prob_away),confidence:predictionData?.model?.confidence!=null?Math.round(Number(predictionData.model.confidence)*100)+'%':'BSD',sampleHome:homeContext.overall?.matches||0,sampleAway:awayContext.overall?.matches||0,source:'BSD'}:null;
+ fixture.prediction=prediction;
+ const odds=oddsData?.odds||oddsData?.data?.odds||null;
+ const status=fixture.status,statistics=bsdStatsGroups(statsData,fixture),events=bsdEvents(incidentsData,fixture);
+ const preMatch={home:homeContext,away:awayContext,notices:[homeContext.notice,awayContext.notice].filter(Boolean)};
+ return {source:'BSD',fixture:[{fixture:{status:{short:status,long:fixture.statusText}},goals:fixture.score,teams:{home:fixture.home,away:fixture.away}}],match:{...fixture,preMatch},statistics,events,lineups,squadKind:lineups.some(g=>g.kind==='lineup')?'lineup':lineups.length?'predicted':null,players:[],injuries,predictions:prediction,odds,h2h:h2hData,live:status==='LIVE',refreshAfterSeconds:status==='LIVE'?30:null,attribution:{label:'BSD · Bzzoiro Sports Data',url:'https://sports.bzzoiro.com/docs/football/'}};
 }
 
 export async function getFixtures(date){
