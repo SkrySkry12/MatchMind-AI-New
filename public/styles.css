@@ -339,3 +339,15 @@ footer{color:#75839b;border-top:1px solid #ffffff12;margin-top:35px}
 .loading,.empty-state{color:#a2aec3}.analysis-panel{background:#131b2a;border-color:#ffffff18}.report{background:#0c121e;color:#d5deec}
 @media(max-width:760px){.hero{padding-top:25px}.hero:after{display:none}.controls{flex-wrap:wrap}.date-navigator{flex:1;justify-content:space-between}.date-navigator input[type=date]{flex:1;min-width:0}.controls .search{flex-basis:100%;width:100%}.main-tabs{overflow-x:auto}.main-tab{white-space:nowrap}}
 @media(prefers-reduced-motion:no-preference){.hero-orb{animation:neo-float 7s ease-in-out infinite}@keyframes neo-float{0%,100%{transform:translateY(0) rotate(-12deg)}50%{transform:translateY(-9px) rotate(-8deg)}}}
+
+
+/* Mobile navigation: keep tabs in one horizontal track instead of squeezing/overlapping. */
+@media(max-width:760px){
+ .main-tabs{display:flex;flex-wrap:nowrap;align-items:stretch;justify-content:flex-start;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;max-width:100%;min-width:0}
+ .main-tab{flex:0 0 auto;width:max-content;min-width:142px;max-width:190px;white-space:normal;scroll-snap-align:start}
+ .main-tab span{display:block;white-space:normal;overflow-wrap:anywhere}
+}
+@media(max-width:520px){
+ .main-tabs{position:relative;top:auto;z-index:2}
+ .main-tab{min-width:136px;padding:10px 11px}
+}

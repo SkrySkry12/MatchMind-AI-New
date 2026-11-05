@@ -206,7 +206,7 @@ export async function getFixtures(date){
  const day=dayUTC(date),[primary,bsd]=await Promise.all([espnFixtures(day),bsdFixtures(day)]);
  if(primary.success===0&&!bsd.fixtures.length)throw new Error('ESPN ani BSD nie zwróciły terminarza dla wybranej daty. Spróbuj ponownie później.');
  const notice=[primary.failed.length?'Nie udało się pobrać części rozgrywek: '+primary.failed.join(', ')+'.':null,bsd.notice].filter(Boolean).join(' ')||null;
- const combined=[...primary.fixtures.filter(f=>f.leagueId!=='pol.1'),...bsd.fixtures];
+ const espnPoland=primary.fixtures.filter(f=>f.leagueId==='pol.1');\n // Prefer BSD for Ekstraklasa, but keep ESPN as a fallback when BSD is empty/unavailable.\n const polishFixtures=bsd.fixtures.length?bsd.fixtures:espnPoland;\n const combined=[...primary.fixtures.filter(f=>f.leagueId!=='pol.1'),...polishFixtures];
  const enriched=await Promise.all(combined.map(f=>f.source==='BSD'?f:enrichFixture(f).catch(()=>({...f,prediction:null,preMatch:null}))));
  return {source:'ESPN + BSD',fixtures:enriched,updated:new Date().toISOString(),notice,failedLeagues:primary.failed,
   attribution:{label:'ESPN',url:'https://www.espn.com/soccer/'}};
