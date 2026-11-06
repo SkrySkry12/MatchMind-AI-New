@@ -268,7 +268,9 @@ async function bsdBundle(id,forceRefresh=false){
  }),...homeContext.injuries.map(x=>({...x,team:fixture.home.name})),...awayContext.injuries.map(x=>({...x,team:fixture.away.name}))];
  const markets=predictionData?.markets||predictionData?.data?.markets||{};
  const result=markets.match_result||{};
- const bsdPrediction=result.prob_home!=null?{home:Number(result.prob_home),draw:Number(result.prob_draw),away:Number(result.prob_away),confidence:predictionData?.model?.confidence!=null?Math.round(Number(predictionData.model.confidence)*100)+'%':'BSD',sampleHome:homeContext.form.length,sampleAway:awayContext.form.length,source:'BSD'}:null;\n const modelPrediction=estimateProbabilities(homeContext.form,awayContext.form);\n const prediction=bsdPrediction||modelPrediction;
+ const bsdPrediction=result.prob_home!=null?{home:Number(result.prob_home),draw:Number(result.prob_draw),away:Number(result.prob_away),confidence:predictionData?.model?.confidence!=null?Math.round(Number(predictionData.model.confidence)*100)+'%':'BSD',sampleHome:homeContext.form.length,sampleAway:awayContext.form.length,source:'BSD'}:null;
+ const modelPrediction=estimateProbabilities(homeContext.form,awayContext.form);
+ const prediction=bsdPrediction||modelPrediction;
  fixture.prediction=prediction;
  const odds=oddsData?.odds||oddsData?.data?.odds||null;
  const status=fixture.status,statistics=bsdStatsGroups(statsData,fixture),events=bsdEvents(incidentsData,fixture);
