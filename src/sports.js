@@ -205,26 +205,35 @@ function bsdPlayers(raw){
  const container=raw?.data||raw?.lineups&&!Array.isArray(raw.lineups)?(raw.data||raw.lineups):raw;
  const sources=Array.isArray(container?.lineups)?container.lineups:[container?.home,container?.away,container?.home_team,container?.away_team].filter(Boolean);
  for(const [index,g] of sources.entries()){
-  const teamName=str(g.team?.name||g.team_name||g.name|| (index===0?'Gospodarze':'Goście'));
-  const xi=array(g.starting_xi||g.startingXI||g.starting||g.players||g.lineup);
-  const bench=array(g.substitutes||g.bench||g.subs);
+  const teamName=str(g.team?.name||g.team_name||g.name||(index===0?'Gospodarze':'Goście'));
+  const explicitXI=array(g.starting_xi||g.startingXI||g.starting);
+  const explicitBench=array(g.substitutes||g.bench||g.subs);
+  const genericPlayers=array(g.players||g.lineup);
+  const hasExplicitXI=explicitXI.length>0;
+  const rosterOnly=!hasExplicitXI&&!explicitBench.length&&genericPlayers.length>0;
   const mapPlayer=(p,starter)=>({name:str(p.player?.name||p.name||p.full_name||p.player_name,''),number:val(p.shirt_number,p.jersey_number,p.number,p.shirt,null),position:str(p.position?.name||p.position_name||p.position||''),starter});
-  const players=[...xi.map(p=>mapPlayer(p,true)),...bench.map(p=>mapPlayer(p,false))].filter(p=>p.name);
-  if(players.length)groups.push({team:teamName,formation:str(g.formation||g.formation_name||''),players,kind:(raw.lineup_status||container.lineup_status)==='predicted'||g.lineup_status==='predicted'?'predicted':'lineup'});
+  const players=rosterOnly?genericPlayers.map(p=>mapPlayer(p,null)).filter(p=>p.name):[...explicitXI.map(p=>mapPlayer(p,true)),...explicitBench.map(p=>mapPlayer(p,false))].filter(p=>p.name);
+  const kind=rosterOnly?'roster':(raw.lineup_status||container.lineup_status)==='predicted'||g.lineup_status==='predicted'?'predicted':'lineup';
+  if(players.length)groups.push({team:teamName,formation:str(g.formation||g.formation_name||''),players,kind});
  }
  return groups;
 }
-async function bsdTeamContext(teamId,forceRefresh=false){
- if(!teamId)return {form:[],overall:null,formString:'',injuries:[],notice:'BSD nie zwrócił identyfikatora drużyny.'};
- const [formData,squadData]=await Promise.all([
-  bsdJson('/api/v2/teams/'+encodeURIComponent(teamId)+'/form/?last=10&league_id='+BSD_LEAGUE_ID,TTL.team,forceRefresh).catch(()=>null),
-  bsdJson('/api/v2/teams/'+encodeURIComponent(teamId)+'/squad/',TTL.squad,forceRefresh).catch(()=>null)
- ]);
- const formRows=array(formData?.recent_matches||formData?.matches_list||formData?.results);
- const form=formRows.map(x=>({date:val(x.event_date,x.date),opponent:str(x.opponent||x.opponent_name||x.home_team||x.away_team,''),gf:val(x.goals_for,x.gf,x.team_score),ga:val(x.goals_against,x.ga,x.opponent_score),result:str(x.result||x.outcome,'')})).filter(x=>x.result);
- const players=array(squadData?.players||squadData?.results||squadData?.squad||squadData?.data);
- const injuries=players.filter(p=>/injured|doubtful|suspended/i.test(str(p.availability))).map(p=>({name:str(p.name||p.player?.name,'Zawodnik'),status:[p.availability,p.injury_type,p.injury_expected_return?'powrót: '+p.injury_expected_return:null].filter(Boolean).join(' · ')}));
- return {form,overall:formData?.overall||null,formString:str(formData?.overall?.form||formData?.form,''),injuries,notice:!formData?'BSD nie udostępnił aktualnej formy tej drużyny.':null};
+function normalizeTeamName(value){
+ return str(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\b(fc|ks|ssa|spolka akcyjna)\b/g,' ').replace(/[^a-z0-9]+/g,' ').trim();
+}
+async function espnPolishTeamId(teamName,forceRefresh=false){
+ const data=await json(ESPN,'/apis/site/v2/sports/soccer/pol.1/teams?limit=1000',TTL.team,forceRefresh).catch(()=>null);
+ const teams=(data?.sports||[]).flatMap(s=>array(s.leagues)).flatMap(l=>array(l.teams)).map(x=>x.team||x).filter(Boolean);
+ const target=normalizeTeamName(teamName);
+ const exact=teams.find(t=>[t.displayName,t.name,t.shortDisplayName,t.location].some(n=>normalizeTeamName(n)===target));
+ const partial=exact||teams.find(t=>[t.displayName,t.name,t.shortDisplayName].some(n=>{const candidate=normalizeTeamName(n);return candidate&&target&&(candidate.includes(target)||target.includes(candidate));}));
+ return partial?.id||null;
+}
+async function bsdTeamContext(team,forceRefresh=false){
+ const espnId=await espnPolishTeamId(team.name,forceRefresh);
+ if(!espnId)return {form:[],injuries:[],notice:'Nie udało się dopasować '+team.name+' do zespołu ESPN — prognoza nie będzie zgadywana.'};
+ const context=await teamContext('pol.1',espnId,true,forceRefresh);
+ return {...context,source:'ESPN',espnId,notice:context.notice||null};
 }
 function bsdStatsGroups(raw,fixture){
  const stats=raw?.stats||raw?.data?.stats||raw;
@@ -250,7 +259,7 @@ async function bsdBundle(id,forceRefresh=false){
  ]);
  const fixture=bsdEventToMatch({...detail,id:eventId});
  if(!fixture)throw new Error('BSD nie zwrócił danych drużyn lub daty spotkania.');
- const [homeContext,awayContext]=await Promise.all([bsdTeamContext(fixture.home.id,forceRefresh),bsdTeamContext(fixture.away.id,forceRefresh)]);
+ const [homeContext,awayContext]=await Promise.all([bsdTeamContext(fixture.home,forceRefresh),bsdTeamContext(fixture.away,forceRefresh)]);
  const lineups=bsdPlayers(lineupData||detail.lineups||{});
  const unavailable=detail.unavailable_players||lineupData?.unavailable_players||[];
  const injuries=[...array(unavailable).flatMap(group=>{
@@ -259,7 +268,7 @@ async function bsdBundle(id,forceRefresh=false){
  }),...homeContext.injuries.map(x=>({...x,team:fixture.home.name})),...awayContext.injuries.map(x=>({...x,team:fixture.away.name}))];
  const markets=predictionData?.markets||predictionData?.data?.markets||{};
  const result=markets.match_result||{};
- const prediction=result.prob_home!=null?{home:Number(result.prob_home),draw:Number(result.prob_draw),away:Number(result.prob_away),confidence:predictionData?.model?.confidence!=null?Math.round(Number(predictionData.model.confidence)*100)+'%':'BSD',sampleHome:homeContext.overall?.matches||0,sampleAway:awayContext.overall?.matches||0,source:'BSD'}:null;
+ const bsdPrediction=result.prob_home!=null?{home:Number(result.prob_home),draw:Number(result.prob_draw),away:Number(result.prob_away),confidence:predictionData?.model?.confidence!=null?Math.round(Number(predictionData.model.confidence)*100)+'%':'BSD',sampleHome:homeContext.form.length,sampleAway:awayContext.form.length,source:'BSD'}:null;\n const modelPrediction=estimateProbabilities(homeContext.form,awayContext.form);\n const prediction=bsdPrediction||modelPrediction;
  fixture.prediction=prediction;
  const odds=oddsData?.odds||oddsData?.data?.odds||null;
  const status=fixture.status,statistics=bsdStatsGroups(statsData,fixture),events=bsdEvents(incidentsData,fixture);
